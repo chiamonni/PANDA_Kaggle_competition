@@ -1,5 +1,6 @@
 from network import DenseNet201
-from PANDA_metric import PANDA_metric
+from PANDA_metric import PANDA_metric, PANDA_loss
+from PANDA_functions import QWKMetric, QWKLoss
 
 import os
 import torch
@@ -36,8 +37,11 @@ class Model:
         network: nn.Module = DenseNet201()
 
         # Define metric, loss, optimizer
-        metric_fn = PANDA_metric('metric')  # Define metric function
-        loss_fn = PANDA_metric('loss')
+        #metric_fn = PANDA_metric()  # Define metric function
+        #loss_fn = PANDA_loss()
+        metric_fn = QWKMetric()
+        loss_fn = QWKLoss()
+
 
         if self.optimizer == 'adam':
             # Define the optimizer. It wants to know which parameters are being optimized.

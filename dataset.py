@@ -142,7 +142,7 @@ class NormScale:
 class ToTensor:
     def __call__(self, sample):
         scan = torch.tensor(sample['scan']).float()
-        label = torch.tensor(sample['label']['isup_grade']).float()
+        label = torch.tensor(sample['label']['isup_grade']).int()
         # Sto togliendo di mezzo le altre informazioni correlate alle labels
 
         return {**sample, 'scan': scan, 'label': label}

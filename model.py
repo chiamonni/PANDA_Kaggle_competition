@@ -37,7 +37,7 @@ class Model:
         network: nn.Module = DenseNet201()
 
         # Define metric, loss, optimizer
-        #metric_fn = PANDA_metric()  # Define metric function
+        # metric_fn = PANDA_metric()  # Define metric function
         #loss_fn = PANDA_loss()
         metric_fn = QWKMetric()
         loss_fn = QWKLoss()

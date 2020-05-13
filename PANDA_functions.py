@@ -1,11 +1,12 @@
 import torch
-
+from torch.nn import functional as F
+DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 def _quadratic_kappa_coefficient(y_true, y_pred):
     y_true, y_pred = y_true.squeeze(), y_pred.squeeze()
     y_true = y_true.type(torch.float32)
     n_classes = y_pred.shape[-1]
-    weights = torch.arange(0, n_classes, dtype=torch.float32) / (n_classes - 1)
+    weights = torch.arange(0, n_classes, dtype=torch.float32, device=DEVICE) / (n_classes - 1)
     weights = (weights - torch.unsqueeze(weights, -1)) ** 2
 
     hist_true = torch.sum(y_true, dim=0)
@@ -35,6 +36,7 @@ class QWKMetric(torch.nn.Module):
         super().__init__()
 
     def forward(self, output, target):
+        target = F.one_hot(target.to(torch.int64).squeeze(), num_classes=6).to(DEVICE)
         return _quadratic_kappa_coefficient(target, output)
 
 
@@ -44,6 +46,7 @@ class QWKLoss(torch.nn.Module):
         self.scale = scale
 
     def forward(self, output, target):
+        target = F.one_hot(target.to(torch.int64).squeeze(), num_classes=6).to(DEVICE)
         return _quadratic_kappa_loss(target, output, self.scale)
 
 '''

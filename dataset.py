@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 import torch
 from torchvision.transforms import Resize
 import skimage.io
+import torchvision.transforms
 
 
 class PANDA_dataset(Dataset):
@@ -134,6 +135,27 @@ class NormScale:
     def __call__(self, sample, *args, **kwargs):
         scan = sample['scan']
         scan: np.ndarray = scan / 255.0
+
+        return {**sample, 'scan': scan.astype('float32')}
+
+# TODO: come usare effettivamente la classe per aumentare i dati? I valori nella colorJitter mi sembrano OK, modificano l'immagine ma non troppo
+class DataAugmentation:
+    """
+    Normalize each pixel t assume a value in the range 0-1
+
+    """
+
+    def __init__(self):
+        pass
+
+    def __call__(self, sample, *args, **kwargs):
+        scan = sample['scan']
+        color = torchvision.transforms.ColorJitter(brightness=0, contrast=(0, 3), saturation=(0, 3), hue=(-.2, .2))
+        rotate = torchvision.transforms.RandomAffine(360, translate=None, scale=None, shear=None, resample=False,
+                                                      fillcolor=0)
+        scan = color(scan)
+        scan = rotate(scan)
+
 
         return {**sample, 'scan': scan.astype('float32')}
 

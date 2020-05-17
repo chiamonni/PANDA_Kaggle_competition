@@ -10,20 +10,22 @@ import torch
 from torchvision.transforms import Resize
 import skimage.io
 import torchvision.transforms
+from PIL import Image
 
 
 class PANDA_dataset(Dataset):
-    def __init__(self, tiff_folder, train_info_path = None, transform=None):
+    def __init__(self, tiff_folder, train_info_path=None, transform=None):
         super(Dataset, self).__init__()
         print('Loading dataset...')
         # Load data
         # Store the paths to the .gz file as a dictionary {patientID: complete_path_to_file}
-        self.tiff_paths = {filename.split('.')[0]: os.path.join(tiff_folder, filename) for filename in os.listdir(tiff_folder)}
+        self.tiff_paths = {filename.split('.')[0]: os.path.join(tiff_folder, filename) for filename in
+                           os.listdir(tiff_folder)}
 
         # Check if dataset is for training or for submission
         if train_info_path:
             train_info = pd.read_csv(train_info_path, index_col=False)
-            #train_info.fillna(train_info.mean(), inplace=True)  # Look for NaN values and replace them with column mean
+            # train_info.fillna(train_info.mean(), inplace=True)  # Look for NaN values and replace them with column mean
             self.labels = {Id: {'data_provider': list(train_info.loc[train_info['image_id'] == Id]['data_provider'])[0],
                                 'isup_grade': list(train_info.loc[train_info['image_id'] == Id]['isup_grade'])[0],
                                 'gleason_score': list(train_info.loc[train_info['image_id'] == Id]['gleason_score'])[0]
@@ -76,13 +78,13 @@ class PANDA_dataset(Dataset):
         scan = multi_scan[1]
 
         # numero canali come prima dimensione per fare conv2D:
-        scan = np.swapaxes(scan, 1, 2)
-        scan = np.swapaxes(scan, 0, 1)
+        # scan = np.swapaxes(scan, 1, 2)
+        # scan = np.swapaxes(scan, 0, 1)
 
         # Create sample
         sample = {
             'ID': id,
-            #'sbm': sbm,
+            # 'sbm': sbm,
             'scan': scan
         }
         # if self.fnc:
@@ -103,7 +105,8 @@ class Crop:
     and eliminates all crops that does not contain relevant information (mostly-blank crops)
 
     """
-    def __init__(self, crop_dim:int, threshold_mean):
+
+    def __init__(self, crop_dim: int, threshold_mean):
         self.crop_dim = crop_dim
         self.threshold_mean = threshold_mean
 
@@ -111,15 +114,12 @@ class Crop:
         scan = sample['scan']
         channnels, height, width = scan.shape
         crops = []
-        for i in range(height//self.crop_dim)[1:]:
-            for j in range(width//self.crop_dim)[1:]:
-                crop = scan[:, (i-1)*self.crop_dim:i*self.crop_dim, (j-1)*self.crop_dim:j*self.crop_dim]
+        for i in range(height // self.crop_dim)[1:]:
+            for j in range(width // self.crop_dim)[1:]:
+                crop = scan[:, (i - 1) * self.crop_dim:i * self.crop_dim, (j - 1) * self.crop_dim:j * self.crop_dim]
                 if crop.mean() < self.threshold_mean:
                     crops.append(crop)
-                    break  # TODO: RIMUOVI I BREAKs SE VUOI ALLENARE
-            if len(crops) > 0:
-                break
-        #scan = np.stack(crops, axis=-1)
+        # scan = np.stack(crops, axis=-1)
         return {**sample, 'scan': crops}
 
 
@@ -138,26 +138,34 @@ class NormScale:
 
         return {**sample, 'scan': scan.astype('float32')}
 
-# TODO: come usare effettivamente la classe per aumentare i dati? I valori nella colorJitter mi sembrano OK, modificano l'immagine ma non troppo
+
+
 class DataAugmentation:
     """
-    Normalize each pixel t assume a value in the range 0-1
 
     """
 
     def __init__(self):
-        pass
+        self.color = torchvision.transforms.ColorJitter(brightness=0, contrast=(0, 3), saturation=(0, 3), hue=(-.2, .2))
+        self.rotate = torchvision.transforms.RandomAffine(360, translate=None, scale=None, shear=None, resample=False,
+                                                          fillcolor=(255, 255, 255))
 
     def __call__(self, sample, *args, **kwargs):
         scan = sample['scan']
-        color = torchvision.transforms.ColorJitter(brightness=0, contrast=(0, 3), saturation=(0, 3), hue=(-.2, .2))
-        rotate = torchvision.transforms.RandomAffine(360, translate=None, scale=None, shear=None, resample=False,
-                                                      fillcolor=0)
-        scan = color(scan)
-        scan = rotate(scan)
+        scan = Image.fromarray(scan)
+        scan = self.color(scan)
+        scan = self.rotate(scan)
+
+        return {**sample, 'scan': np.array(scan).astype('float32')}
 
 
-        return {**sample, 'scan': scan.astype('float32')}
+class SwapAxes:
+    def __call__(self, sample, *args, **kwargs):
+        scan = sample['scan']
+        scan = np.swapaxes(scan, 1, 2)
+        scan = np.swapaxes(scan, 0, 1)
+
+        return {**sample, 'scan': np.array(scan).astype('float32')}
 
 
 # Custom transform example
@@ -168,6 +176,44 @@ class ToTensor:
         # Sto togliendo di mezzo le altre informazioni correlate alle labels
 
         return {**sample, 'scan': scan, 'label': label}
+
+
+def collate_fn(batch, training=True):
+    """
+    Trasforma righe in colonne.
+    [
+        ['ID': ID0, 'scan': scan0, 'label': label0],
+        ['ID': ID1, 'scan': scan1, 'label': label1].
+        ...
+    ]
+    ---------->
+    [
+    'ID': [ID0, ID1, ...],
+    'scan': [scan0, scan1, ...],
+    'label': [label0, label1, ...],
+    ...]
+    """
+    IDs = []
+    labels = []
+    scans = []
+    for a in batch:
+        ID, scan = a['ID'], a['scan']
+        if training:
+            label = a['label']
+            labels.append(label['isup_grade'])
+        IDs.append(ID)
+        scans.append(torch.tensor(scan))
+
+    sample = {
+        'ID': IDs,
+        'scan': scans,
+    }
+
+    if training:
+        sample['label'] = torch.tensor(labels)
+
+    return sample
+
 
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
@@ -191,6 +237,3 @@ if __name__ == '__main__':
         print(len(batch['scan']))
         print(batch['label'])
         break
-
-
-

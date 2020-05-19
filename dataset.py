@@ -73,7 +73,6 @@ class PANDA_dataset(Dataset):
         # brain = None
 
         # sbm = self.sbm[ID]
-
         multi_scan = skimage.io.MultiImage(self.tiff_paths[id])
         scan = multi_scan[1]
 
@@ -108,18 +107,21 @@ class Crop:
 
     def __init__(self, crop_dim: int, threshold_mean):
         self.crop_dim = crop_dim
-        self.threshold_mean = threshold_mean
+        self.threshold_mean = threshold_mean * 255
 
     def __call__(self, sample, *args, **kwargs):
         scan = sample['scan']
-        channnels, height, width = scan.shape
+        height, width, _ = scan.shape
         crops = []
-        for i in range(height // self.crop_dim)[1:]:
-            for j in range(width // self.crop_dim)[1:]:
-                crop = scan[:, (i - 1) * self.crop_dim:i * self.crop_dim, (j - 1) * self.crop_dim:j * self.crop_dim]
+
+        for i in range(height // self.crop_dim):
+            for j in range(width // self.crop_dim):
+                crop = scan[i * self.crop_dim:(i + 1) * self.crop_dim, j * self.crop_dim:(j + 1) * self.crop_dim, ...]
                 if crop.mean() < self.threshold_mean:
                     crops.append(crop)
         # scan = np.stack(crops, axis=-1)
+        if len(crops) == 0:
+            raise ValueError("FERMATI!")
         return {**sample, 'scan': crops}
 
 
@@ -137,7 +139,6 @@ class NormScale:
         scan: np.ndarray = scan / 255.0
 
         return {**sample, 'scan': scan.astype('float32')}
-
 
 
 class DataAugmentation:
@@ -178,7 +179,7 @@ class ToTensor:
         return {**sample, 'scan': scan, 'label': label}
 
 
-def collate_fn(batch, training=True):
+def collate_fn(batch, training=False):
     """
     Trasforma righe in colonne.
     [
@@ -219,21 +220,27 @@ if __name__ == '__main__':
     from torch.utils.data import DataLoader
     from torchvision import transforms
 
-    base_path = '..'
-    train_tiff_folder = os.path.join(base_path, 'dataset/train_images')
-    train_info_path = os.path.join(base_path, 'dataset/train.csv')
-    mask_path = os.path.join(base_path, 'dataset/train_label_masks')
+    base_path = os.path.join('..', 'dataset')
+    train_tiff_folder = os.path.join(base_path, 'train_images')
+    train_info_path = os.path.join(base_path, 'train.csv')
+    mask_path = os.path.join(base_path, 'train_label_masks')
     # mean_path = os.path.join(base_path, 'dataset', 'mean.pt')
     # variance_path = os.path.join(base_path, 'dataset', 'variance.pt')
 
     # Define transformations
     # trans = transforms.Compose([Resize((1840, 1728))])
-    trans = transforms.Compose([NormScale(), Crop(256, .95)])
+    trans = transforms.Compose([Crop(256, .95)])
+    dataset = PANDA_dataset(train_tiff_folder, transform=trans)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=12,
+                            collate_fn=collate_fn)
 
-    dataset = PANDA_dataset(train_tiff_folder, train_info_path, transform=trans)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=0)
+    crops = []
+    for batch in tqdm(dataloader):
+        crops.append((batch['ID'][0], batch['scan'][0].shape[0]))
 
-    for batch in dataloader:
-        print(len(batch['scan']))
-        print(batch['label'])
-        break
+    # crops = np.array(crops)
+    ''' print("Number of crops: {}".format(crops.shape[0]))
+    print("Max crops: {}".format(np.max(crops)))
+    print("Min crops: {}".format(np.min(crops)))
+    print("Mean crops: {}".format(np.mean(crops)))'''
+    print(crops)

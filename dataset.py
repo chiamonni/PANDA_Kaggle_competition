@@ -11,6 +11,7 @@ from torchvision.transforms import Resize
 import skimage.io
 import torchvision.transforms
 from PIL import Image
+import random
 
 
 class PANDA_dataset(Dataset):
@@ -216,6 +217,26 @@ def collate_fn(batch, training=False):
     return sample
 
 
+class NormCropsNumber:
+    def __init__(self, num_crops):
+        self.num_crops = num_crops
+        #self.color = torchvision.transforms.ColorJitter(brightness=0, contrast=(0, 3), saturation=(0, 3), hue=(-.2, .2))
+        #self.rotate = torchvision.transforms.RandomAffine(360, translate=None, scale=None, shear=None, resample=False,
+        #                                                  fillcolor=(255, 255, 255))
+
+    def __call__(self, sample):
+        scan = sample['scan']
+
+        while len(scan) <= self.num_crops:
+            scan.extend(scan)
+
+        if len(scan) > self.num_crops:
+            random.shuffle(scan)
+            scan =scan[: self.num_crops]
+
+        return {**sample, 'scan': scan}
+
+
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
     from torchvision import transforms
@@ -229,7 +250,7 @@ if __name__ == '__main__':
 
     # Define transformations
     # trans = transforms.Compose([Resize((1840, 1728))])
-    trans = transforms.Compose([Crop(256, .95)])
+    trans = transforms.Compose([Crop(256, .95), NormCropsNumber(50)])
     dataset = PANDA_dataset(train_tiff_folder, transform=trans)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=12,
                             collate_fn=collate_fn)

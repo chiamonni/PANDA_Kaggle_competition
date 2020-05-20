@@ -1,5 +1,5 @@
 from model import Model
-from dataset import PANDA_dataset, NormScale, Crop, ToTensor, DataAugmentation, collate_fn, SwapAxes
+from dataset import PANDA_dataset, NormScale, Crop, ToTensor, DataAugmentation, collate_fn, SwapAxes, NormCropsNumber
 from network import DenseNet201
 import shutil
 from torch.utils.data import DataLoader, random_split
@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     # Define transformations
     # crop --> dimensione immagine croppata, threshold per decidere se scartare o tenere l'immagine
-    trans = transforms.Compose([DataAugmentation(), SwapAxes(), NormScale(), Crop(256, .95)])
+    trans = transforms.Compose([Crop(256, .95), NormCropsNumber(10), SwapAxes()])
 
     # create dataset
     dataset = PANDA_dataset(train_tiff_folder, train_info_path, transform=trans)
@@ -32,13 +32,11 @@ if __name__ == '__main__':
     # define hyperparameters
     optimizer = 'adam'
     learning_rate = 1e-3
-    batch_size = 1
+    batch_size = 2
 
     # Define train and val loaders
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=0,
-                              collate_fn=collate_fn)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=0,
-                            collate_fn=collate_fn)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=12)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=12)
 
     # Define model
     model = Model(optimizer, lr=learning_rate)

@@ -37,7 +37,7 @@ class BaseNetwork(nn.Module):
         conc_metrics = []
 
         for batch in tqdm(train_loader, desc='Training...'):
-            net_input = [img.to(DEVICE) for img in batch['scan']]
+            net_input = batch['scan'].to(DEVICE)
             labels = batch['label'].to(DEVICE)
 
             # forward pass
@@ -76,7 +76,7 @@ class BaseNetwork(nn.Module):
         conc_metrics = []
         with torch.no_grad():
             for batch in tqdm(val_loader, desc='Validating...'):
-                net_input = [img.to(DEVICE) for img in batch['scan']]
+                net_input = batch['scan'].to(DEVICE)
                 labels = batch['label'].to(DEVICE)
 
                 # evaluate the network over the input
@@ -127,7 +127,8 @@ class DenseNet201(BaseNetwork):
         # inputs: il singolo input è un immagine del train, già suddivisa in "crops" --> è una lsta dei crop che definiscono la singola immgine
         # per ogni crop, calcolo le 6 probabilità e le sommo tra loro, in modo da avere un layer da 6 elementi che
         # rappresenti l'intera immagine, invece di tenere le informazioni sul singolo crop
-        for crop in inputs:
+        inputs: torch.Tensor
+        for crop in inputs.transpose(0, 1):
             x = x + self.dense(crop)
 
         return x

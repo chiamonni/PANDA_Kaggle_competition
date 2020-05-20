@@ -91,7 +91,7 @@ class PANDA_dataset(Dataset):
         #    sample['fnc'] = self.fnc[ID]
         # Add labels to the sample if the dataset is the training one.
         if self.labels:
-            sample['label'] = self.labels[id]
+            sample['label'] = self.labels[id]['isup_grade']
 
         # Transform sample (if defined)
         return self.transform(sample) if self.transform else sample
@@ -121,9 +121,8 @@ class Crop:
                 if crop.mean() < self.threshold_mean:
                     crops.append(crop)
         # scan = np.stack(crops, axis=-1)
-        if len(crops) == 0:
-            raise ValueError("FERMATI!")
-        return {**sample, 'scan': crops}
+
+        return {**sample, 'scan': torch.tensor(crops)}
 
 
 class NormScale:
@@ -164,8 +163,7 @@ class DataAugmentation:
 class SwapAxes:
     def __call__(self, sample, *args, **kwargs):
         scan = sample['scan']
-        scan = np.swapaxes(scan, 1, 2)
-        scan = np.swapaxes(scan, 0, 1)
+        scan = scan.transpose(1, 3)
 
         return {**sample, 'scan': np.array(scan).astype('float32')}
 
@@ -227,12 +225,14 @@ class NormCropsNumber:
     def __call__(self, sample):
         scan = sample['scan']
 
-        while len(scan) <= self.num_crops:
-            scan.extend(scan)
+        while scan.shape[0] <= self.num_crops:
+            scan = torch.cat([scan, scan], dim=0)
 
-        if len(scan) > self.num_crops:
-            random.shuffle(scan)
-            scan =scan[: self.num_crops]
+        if scan.shape[0] > self.num_crops:
+            indexes = list(range(scan.shape[0]))
+            random.shuffle(indexes)
+            indexes = indexes[:self.num_crops]
+            scan = torch.index_select(scan, dim=0, index=torch.tensor(indexes, dtype=torch.int64))
 
         return {**sample, 'scan': scan}
 
@@ -250,10 +250,9 @@ if __name__ == '__main__':
 
     # Define transformations
     # trans = transforms.Compose([Resize((1840, 1728))])
-    trans = transforms.Compose([Crop(256, .95), NormCropsNumber(50)])
+    trans = transforms.Compose([Crop(256, .95), NormCropsNumber(25)])
     dataset = PANDA_dataset(train_tiff_folder, transform=trans)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True, num_workers=12,
-                            collate_fn=collate_fn)
+    dataloader = DataLoader(dataset, batch_size=10, shuffle=False, pin_memory=True, num_workers=0)
 
     crops = []
     for batch in tqdm(dataloader):

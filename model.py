@@ -82,10 +82,13 @@ class Model:
         # Mandatory parameters to be used.
         dropout_prob = net_hyperparams['dropout_prob']
         # Define number of classes in case I use binned labels
-
+        if self.binned:
+            num_classes = 5
+        else:
+            num_classes = 6
         # Define custom network. In each one the specific parameters must be added from self.net_params
         if net_type == 'IAFoss':
-            network: nn.Module = IAFoss(n=6, dropout_prob=dropout_prob, use_apex=self.use_apex)
+            network: nn.Module = IAFoss(n=num_classes, dropout_prob=dropout_prob, use_apex=self.use_apex)
         # elif net_type == 'CustomDenseNet3D':
         #     network: nn.Module = CustomDenseNet3D(dropout_prob)
         else:

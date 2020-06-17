@@ -52,7 +52,7 @@ if __name__ == '__main__':
         'lr': 1e-4,
         'lr_decay': 1.,
         'use_apex': True,
-        'weight_decay': 0.,
+        'weight_decay': 1e-2,
         'optimizer_type': 'adamw',
         'network_type': 'IAFoss',
         'loss_type': 'binnedbce',
@@ -103,8 +103,9 @@ if __name__ == '__main__':
     model = Model(net_hyperparams=net_hyperparams, train_params=train_params)
 
     # Define train and val loaders
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=train_workers, collate_fn=model.net.collate_fn)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=val_workers, collate_fn=model.net.collate_fn)
+    # Drop last batch because for little dimension of batch the QWK metric explodes
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=train_workers, collate_fn=model.net.collate_fn, drop_last=True)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=val_workers, collate_fn=model.net.collate_fn, drop_last=True)
 
     # Use in case of start training from saved checkpoint
     # import torch

@@ -2,24 +2,45 @@ import torch
 from torch.nn import functional as F
 
 
-def _quadratic_kappa_coefficient(output, target):
+def check_tensor(name, t):
+    if torch.isnan(t).any() or torch.isinf(t).any():
+        print(name, t)
+
+
+def _quadratic_kappa_coefficient(output, target, eps=0.):
     output, target = output.type(torch.float32), target.type(torch.float32)
+    # check_tensor('output', output)
+    # check_tensor('target', target)
     n_classes = target.shape[-1]
     weights = torch.arange(0, n_classes, dtype=torch.float32, device=output.device) / (n_classes - 1)
     weights = (weights - torch.unsqueeze(weights, -1)) ** 2
+    # check_tensor('weights', weights)
 
     C = (output.t() @ target).t()  # confusion matrix
+    # check_tensor('C', C)
 
     hist_true = torch.sum(target, dim=0).unsqueeze(-1)
     hist_pred = torch.sum(output, dim=0).unsqueeze(-1)
 
     E = hist_true @ hist_pred.t()  # Outer product of histograms
-    E = E / C.sum() # Normalize to the sum of C.
+    E = E / C.sum()  # Normalize to the sum of C.
+    # check_tensor("E", E)
+    if torch.isinf(E).any():
+        print("E", E)
+        print("output", output)
+        print("target", target)
+        print("weights", weights)
+        print("C", C)
+        print("hist_true", hist_true)
+        print("hist_pred", hist_pred)
+        raise ValueError("inf found")
 
     num = weights * C
     den = weights * E
 
-    QWK = 1 - torch.sum(num) / torch.sum(den)
+    # check_tensor('num', num)
+    # check_tensor('den', den)
+    QWK = 1 - torch.sum(num) / (torch.sum(den) + eps)  # eps guarantees numerical stability
     return QWK
 
 

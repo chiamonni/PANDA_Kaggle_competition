@@ -2,11 +2,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from typing import Optional
+import torch.nn.functional as F
 
 
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-
+######## UTILS
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience"""
 
@@ -36,29 +35,31 @@ class EarlyStopping:
             raise ValueError("Bad mode type, please choose between 'higher' and 'lower'")
 
     def __call__(self, train_metric, val_metric, model=None):
-        # Metric: the lower the better -> score: the higher the better
         val_score = self.mode * val_metric
         train_score = self.mode * train_metric
-
-        if self.best_score is None:
-            self.best_score = val_score
-            self.save_checkpoint = True
-            self.best_val_metric = val_metric
-        elif val_score < self.best_score + self.delta and train_score > val_score + self.delta:  # apply patience only if train is better than val scores
-            self.counter += 1
-            # print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
-            if self.counter >= self.patience:
-                self.early_stop = True
-            self.save_checkpoint = False
-        elif val_score > self.best_score:
-            self.best_score = val_score
-            self.save_checkpoint = True
-            self.best_val_metric = val_metric
-            self.counter = 0
+        if not torch.isnan(torch.tensor(val_score)):
+            if self.best_score is None:
+                self.best_score = val_score
+                self.save_checkpoint = True
+                self.best_val_metric = val_metric
+            elif val_score < self.best_score + self.delta and train_score > val_score + self.delta:  # apply patience only if train is better than val scores
+                self.counter += 1
+                print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+                if self.counter >= self.patience:
+                    self.early_stop = True
+                self.save_checkpoint = False
+            elif val_score > self.best_score:
+                self.best_score = val_score
+                self.save_checkpoint = True
+                self.best_val_metric = val_metric
+                self.counter = 0
+            else:
+                self.save_checkpoint = False
         else:
             self.save_checkpoint = False
 
 
+######## ACTIVATIONS
 class Mish(torch.nn.Module):
     """
     Applies the mish activation function element-wise:
@@ -95,12 +96,36 @@ class Mish(torch.nn.Module):
         return self.mish(input)
 
 
+######### CUSTOM LAYERS
 class Flatten(torch.nn.Module):
     """
     The flatten layer to build sequential models
     """
     def forward(self, input):
         return input.view(input.size(0), -1)
+
+
+class SiameseBlock(torch.nn.Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self, x):
+        x = torch.cat([self.module(x_i) for x_i in x.transpose(1, 0)], 1)
+        return x
+
+
+class ChiaBlock(torch.nn.Module):
+    def __init__(self, module, axis=-1):
+        super().__init__()
+        self.module = module
+        self.axis = axis
+
+    def forward(self, x):
+        x = torch.stack([self.module(x_i) for x_i in x.transpose(1, 0)], self.axis)
+        x = torch.mean(x, self.axis)
+        # x = torch.logsumexp(x, self.axis) / x.size(self.axis)
+        return x
 
 
 class AdaptiveConcatPool2d(torch.nn.Module):
@@ -115,6 +140,7 @@ class AdaptiveConcatPool2d(torch.nn.Module):
     def forward(self, x): return torch.cat([self.mp(x), self.ap(x)], 1)
 
 
+############# LOSSES
 class BinnedBCE(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
@@ -124,3 +150,13 @@ class BinnedBCE(nn.Module):
     def forward(self, output, target: torch.Tensor):
         bin_target = torch.stack([self.binning(t) for t in target.tolist()], dim=0).to(target.device)
         return self.loss(output, bin_target)
+
+
+if __name__ == '__main__':
+    p = Plotter()
+    a = (0, 0.123, 0.431, 0.23542, 0.1231)
+    b = (1, 1.123, 1.431, 1.23542, 1.1231)
+    c = (2, 2.123, 1.431, 3.23542, 4.1231)
+    p(*a)
+    p(*b)
+    p(*c)

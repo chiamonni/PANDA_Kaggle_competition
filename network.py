@@ -3,10 +3,10 @@ import torch
 from torch import nn
 from tqdm import tqdm
 from apex import amp
-from pytorchtools import Mish, Flatten, AdaptiveConcatPool2d
+from pytorchtools import Mish, Flatten, AdaptiveConcatPool2d, SiameseBlock, ChiaBlock
+from efficientnet_pytorch import EfficientNet
+import os
 
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-# DEVICE = torch.device('cpu')
 
 class BaseNetwork(nn.Module):
     """
@@ -63,7 +63,8 @@ class BaseNetwork(nn.Module):
                 loss.backward()
 
             # Enable in case of gradient clipping
-            # norms += torch.nn.utils.clip_grad_norm_(self.parameters(), 5.).item()
+            # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.)
+            # torch.nn.utils.clip_grad_value_(self.parameters(), 100.)
 
             # update optimizer
             optimizer.step()
@@ -95,6 +96,12 @@ class BaseNetwork(nn.Module):
                 # evaluate the network over the input
                 net_output = self.forward(net_input)
 
+                if torch.isinf(net_output).any() or torch.isnan(net_output).any():
+                    print("net_output", net_output)
+                    print("net_input", net_input)
+                    print('filenames', batch[2])
+                    raise ValueError("inf or nan found")
+
                 del net_input
                 loss = loss_fn(net_output, labels)
                 metric = metric_fn(net_output, labels)
@@ -114,31 +121,33 @@ class BaseNetwork(nn.Module):
         with torch.no_grad():
             for batch in tqdm(test_loader, desc="Predicting test set..."):
                 net_input = [b.to(DEVICE) for b in batch[0]]
-                conc_ID.extend(list(batch[0].detach().cpu().numpy()))
+                conc_ID.extend(list(batch[1].detach().cpu().numpy()))
                 # evaluate the network over the input
-                conc_output.extend(list(net(net_input).detach().cpu().numpy()))
+                conc_output.extend(list(net(net_input).detach().cpu().round().numpy()))
 
         return conc_ID, conc_output
 
 
 class IAFoss(BaseNetwork):
-    def __init__(self, arch='resnext50_32x4d_swsl', n=6, pre=True, dropout_prob=0., use_apex=False):
+    def __init__(self, arch='resnext50_32x4d_swsl', n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        self.fc_dim = fc_dim
         super().__init__(use_apex)
         m = torch.hub
         m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
         m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
         self.enc = nn.Sequential(*list(m.children())[:-2])
-        for param in self.enc.parameters():
-            param.requires_grad_(False)
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
         nc = list(m.children())[-1].in_features
         self.head = nn.Sequential(
             AdaptiveConcatPool2d(),
             Flatten(),
-            nn.Linear(2 * nc, 512),
+            nn.Linear(2 * nc, self.fc_dim),
             Mish(),
-            nn.BatchNorm1d(512),
+            nn.BatchNorm1d(self.fc_dim),
             nn.Dropout(dropout_prob),
-            nn.Linear(512, n)
+            nn.Linear(self.fc_dim, n)
         )
 
     def forward(self, x):
@@ -159,29 +168,465 @@ class IAFoss(BaseNetwork):
         return x
 
 
-class DenseNet201(BaseNetwork):
-    def __init__(self,
-                 num_classes=6,
-                 pretrained=True):
-        # Call the parent init function (required!)
-        super().__init__()
+class IAFoss_SiameseIdea(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet18_swsl', n=6, fc_dim=2048, num_crops=36, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            SiameseBlock(nn.Sequential(self.enc, nn.AdaptiveAvgPool2d(1))),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc * num_crops, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
 
-        # Define dense. Output layer dimension must be equal to num_classes
-        self.dense = models.densenet121(pretrained=pretrained)
-        self.dense.classifier = nn.Linear(1024, num_classes)
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
 
-        self.num_classes = num_classes
 
-    def forward(self, inputs, mask=None):
+class BigSiamese(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet18_swsl', n=6, fc_dim=2024, num_crops=36, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            SiameseBlock(self.enc),
+            # AdaptiveConcatPool2d(),
+            nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc * num_crops, fc_dim),
+            nn.BatchNorm1d(fc_dim),
+            Mish(),
+            nn.Linear(fc_dim, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
 
-        x = torch.zeros(self.num_classes, device=DEVICE)
 
-        # inputs: il singolo input è un immagine del train, già suddivisa in "crops" --> è una lsta dei crop che definiscono la singola immgine
-        # per ogni crop, calcolo le 6 probabilità e le sommo tra loro, in modo da avere un layer da 6 elementi che
-        # rappresenti l'intera immagine, invece di tenere le informazioni sul singolo crop
-        inputs: torch.Tensor
-        for crop in inputs.transpose(0, 1):
-            x = x + self.dense(crop)
+class ResNet50Siamese(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet50_swsl', n=6, fc_dim=2048, num_crops=36, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            SiameseBlock(self.enc),
+            # AdaptiveConcatPool2d(),
+            nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc * num_crops, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
 
-        return x
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class ResNet18Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet18_swsl', n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            ChiaBlock(nn.Sequential(self.enc, nn.AdaptiveMaxPool2d(1))),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class ResNet18ChiaSSL(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet18_ssl', n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            ChiaBlock(nn.Sequential(self.enc, nn.AdaptiveMaxPool2d(1))),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class ResNet50Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet50_swsl', n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            ChiaBlock(nn.Sequential(self.enc, nn.AdaptiveMaxPool2d(1))),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class DenseNet121Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    os.setgid(1000), os.setuid(1000)
+    def __init__(self, n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('pytorch/vision:v0.6.0', 'densenet121', pretrained=True)
+
+        if freeze_weights:
+            for param in m.parameters():
+                param.requires_grad_(False)
+
+        nc = m.classifier.in_features
+        self.head = nn.Sequential(
+            ChiaBlock(m),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+        m.classifier = nn.Identity()
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class MobileNetV2Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    os.setgid(1000), os.setuid(1000)
+    def __init__(self, n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('pytorch/vision:v0.6.0', 'mobilenet_v2', pretrained=True)
+
+        if freeze_weights:
+            for param in m.parameters():
+                param.requires_grad_(False)
+
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            ChiaBlock(m),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+        m.classifier = nn.Identity()
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class ResNet34Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    os.setgid(1000), os.setuid(1000)
+    def __init__(self, n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=True)
+        m = nn.Sequential(*list(m.children())[:-1])
+        if freeze_weights:
+            for param in m.parameters():
+                param.requires_grad_(False)
+
+        nc = 512
+        self.head = nn.Sequential(
+            ChiaBlock(m),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class EfficientNetB7Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+
+    def __init__(self, n=6, fc_dim=2048, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        pretrained_model = ('efficientnet-b7', 'efficientnet-b7-dcc49843.pth')
+        self.enc = EfficientNet.from_name(pretrained_model[0])
+        self.enc.load_state_dict(torch.load(os.path.join('cache', 'checkpoints', pretrained_model[1])))
+
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = self.enc._fc.in_features
+        self.head = nn.Sequential(
+            ChiaBlock(self.enc),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            nn.Linear(nc, fc_dim),
+            nn.BatchNorm1d(fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+        self.enc._fc = nn.Identity()
+
+    def forward(self, x):
+        # temp = []
+        # x.shape = bs, N, C, H, W
+        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+        #     temp.append(self.enc(scan))
+        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
+        # x = self.head(x)  # x.shape = bs, 5
+        # return x
+        return self.head(x)
+
+
+class EfficientNetB0(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, num_classes=6, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        pretrained_model = ('efficientnet-b0', 'efficientnet-b0-355c32eb.pth')
+        self.enc = EfficientNet.from_name(pretrained_model[0])
+        self.enc.load_state_dict(torch.load(os.path.join('cache', 'checkpoints', pretrained_model[1])))
+
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+
+        self.classify = nn.Sequential(
+            self.enc,
+            nn.Linear(self.enc._fc.in_features, num_classes)
+        )
+        self.enc._fc = nn.Identity()
+
+    def forward(self, x):
+        return self.classify(x)
+
+
+class EfficientNetB0Siamese(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, num_classes=6, freeze_weights=False, num_crops=36, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        pretrained_model = ('efficientnet-b0', 'efficientnet-b0-355c32eb.pth')
+        self.enc = EfficientNet.from_name(pretrained_model[0])
+        self.enc.load_state_dict(torch.load(os.path.join('cache', 'checkpoints', pretrained_model[1])))
+
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+
+        self.classify = nn.Sequential(
+            SiameseBlock(self.enc),
+            nn.ReLU(inplace=True),
+            nn.Linear(self.enc._fc.in_features*num_crops, 2048),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout_prob),
+            nn.Linear(2048, num_classes)
+        )
+        self.enc._fc = nn.Identity()
+
+    def forward(self, x):
+        return self.classify(x)
+
+
+class Chia(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet18_swsl', n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        self.fc_dim = fc_dim
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            AdaptiveConcatPool2d(),
+            Flatten(),
+            nn.Linear(2 * nc, self.fc_dim),
+            Mish(),
+            nn.BatchNorm1d(self.fc_dim),
+            nn.Dropout(dropout_prob),
+            nn.Linear(self.fc_dim, n)
+        )
+
+    def forward(self, x):
+        temp = []
+        # x.shape = bs, N, C, H, W
+        for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
+            temp.append(self.enc(scan))
+        x = torch.stack(temp, 0).mean(0)  # x.shape = bs, nc, 8, 8
+        x = self.head(x)  # x.shape = bs, 5
+        return torch.clamp(x, -100., 100.)
 

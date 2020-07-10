@@ -1,3 +1,4 @@
+from decompress_and_convert import Akensert, InvertColors
 import os
 from tqdm import tqdm
 import numpy as np
@@ -41,12 +42,12 @@ class PANDA_dataset(Dataset):
 
     def __getitem__(self, item):
         # Get the ID corresponding to the item (an index) that torch is looking for.
-        id = self.__num_to_id[item]
-        scan = np.array(Image.open(self.img_paths[id]))
+        filename = self.__num_to_id[item]
+        scan = np.array(Image.open(self.img_paths[filename]))
 
         # Create sample
         sample = {
-            'ID': id,
+            'filename': filename,
             'scan': scan
         }
 
@@ -123,10 +124,10 @@ class StridedCrop:
             crops = np.stack(crops, axis=0)
         except ValueError:
             try:
-                print("Try emergency crop for: {}".format(sample['ID']))
+                # print("Try emergency crop for: {}".format(sample['ID']))
                 crops = self.emergency_crop(scan)
             except ValueError:
-                print("Could not crop: {}".format(sample['ID']))
+                # print("Could not crop: {}".format(sample['ID']))
                 crops = torch.zeros(1, 256, 256, 3).type(torch.uint8)
         return {**sample, 'scan': crops}
 
@@ -136,7 +137,7 @@ class SaveTensor:
         self.dest_path = dest_path
 
     def __call__(self, sample, *args, **kwargs):
-        name = sample['ID']
+        name = sample['filename']
         scan = sample['scan']
         scan = torch.tensor(scan, dtype=torch.uint8)
         s = [(i, s.type(torch.float32).mean()) for i, s in enumerate(scan)]
@@ -145,7 +146,7 @@ class SaveTensor:
         scan_permuted = torch.zeros_like(scan)
         scan_permuted[indices] = scan
         torch.save(scan, os.path.join(self.dest_path, name + '.pt'))
-        return 1
+        return sample
 
 
 class NormScale:
@@ -227,12 +228,15 @@ if __name__ == '__main__':
     # Define transformations
     # trans = transforms.Compose([Resize((1840, 1728))])
     trans = transforms.Compose([
-        ZeroThreshold(20),
-        StridedCrop(256, .50, stride=5),
-        SaveTensor(os.path.join(base_path, 'images', 'cropped'))
+        InvertColors(),
+        Akensert(),
+        InvertColors(),
+        # ZeroThreshold(20),
+        # StridedCrop(256, .50, stride=5),
+        SaveTensor(os.path.join(base_path, 'images', 'akensert'))
     ])
     dataset = PANDA_dataset(train_pt_folder, transform=trans)
-    dataloader = DataLoader(dataset, batch_size=5, num_workers=12)
+    dataloader = DataLoader(dataset, batch_size=1, num_workers=12)
 
     crops = []
     for batch in tqdm(dataloader):
@@ -243,8 +247,8 @@ if __name__ == '__main__':
         # break
 
     # crops = np.array(crops)
-    ''' print("Number of crops: {}".format(crops.shape[0]))
-    print("Max crops: {}".format(np.max(crops)))
-    print("Min crops: {}".format(np.min(crops)))
-    print("Mean crops: {}".format(np.mean(crops)))'''
-    print(crops)
+    # ''' print("Number of crops: {}".format(crops.shape[0]))
+    # print("Max crops: {}".format(np.max(crops)))
+    # print("Min crops: {}".format(np.min(crops)))
+    # print("Mean crops: {}".format(np.mean(crops)))'''
+    # print(crops)

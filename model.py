@@ -1,7 +1,6 @@
 from PANDA_functions import QWKMetric, QWKLoss
 
-from network import \
-    IAFoss
+from network import *
 from pytorchtools import EarlyStopping, BinnedBCE
 
 from apex import amp, optimizers
@@ -12,8 +11,9 @@ import torch.nn as nn
 import pandas as pd
 from tqdm import tqdm
 from typing import Dict, Union
-os.setgid(1000), os.setuid(1000)
 
+os.setgid(1000), os.setuid(1000)
+import time
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -34,7 +34,8 @@ class Model:
             'optimizer_type',
             'network_type',
             'loss_type',
-            'binned'
+            'binned',
+            'freeze_weights'
         ]
         self.base_lr, \
         self.max_lr, \
@@ -45,7 +46,8 @@ class Model:
         optimizer_type, \
         network_type, \
         loss_type, \
-        self.binned \
+        self.binned, \
+        self.freeze_weights \
             = [train_params[k] for k in train_params_keys]
 
         self.loss, self.optimizer, self.net = self.__build_model(
@@ -81,6 +83,7 @@ class Model:
                       ) -> (nn.Module, nn.Module, torch.optim, nn.Module):
         # Mandatory parameters to be used.
         dropout_prob = net_hyperparams['dropout_prob']
+        num_crops = net_hyperparams['num_crops']
         # Define number of classes in case I use binned labels
         if self.binned:
             num_classes = 5
@@ -88,7 +91,49 @@ class Model:
             num_classes = 6
         # Define custom network. In each one the specific parameters must be added from self.net_params
         if net_type == 'IAFoss':
-            network: nn.Module = IAFoss(n=num_classes, dropout_prob=dropout_prob, use_apex=self.use_apex)
+            network: nn.Module = IAFoss(n=num_classes, fc_dim=512, freeze_weights=self.freeze_weights,
+                                        dropout_prob=dropout_prob, use_apex=self.use_apex)
+        elif net_type == 'IAFoss_SiameseIdea':
+            network: nn.Module = IAFoss_SiameseIdea(n=num_classes, num_crops=num_crops,
+                                                    freeze_weights=self.freeze_weights, dropout_prob=dropout_prob,
+                                                    use_apex=self.use_apex)
+        elif net_type == 'Chia':
+            network: nn.Module = Chia(n=num_classes, fc_dim=512, freeze_weights=self.freeze_weights,
+                                      dropout_prob=dropout_prob, use_apex=self.use_apex)
+        elif net_type == 'EfficientNetB0':
+            network: nn.Module = EfficientNetB0(num_classes=num_classes, dropout_prob=dropout_prob,
+                                                freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'EfficientNetB0Siamese':
+            network: nn.Module = EfficientNetB0Siamese(num_classes=num_classes, dropout_prob=dropout_prob,
+                                                       num_crops=num_crops, freeze_weights=self.freeze_weights,
+                                                       use_apex=self.use_apex)
+        elif net_type == 'BigSiamese':
+            network: nn.Module = BigSiamese(n=num_classes, dropout_prob=dropout_prob, num_crops=num_crops,
+                                            freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'ResNet50Siamese':
+            network: nn.Module = ResNet50Siamese(n=num_classes, dropout_prob=dropout_prob, num_crops=num_crops,
+                                                 freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'ResNet18Chia':
+            network: nn.Module = ResNet18Chia(n=num_classes, dropout_prob=dropout_prob,
+                                              freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'ResNet18ChiaSSL':
+            network: nn.Module = ResNet18ChiaSSL(n=num_classes, dropout_prob=dropout_prob,
+                                              freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'ResNet50Chia':
+            network: nn.Module = ResNet50Chia(n=num_classes, dropout_prob=dropout_prob,
+                                              freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'EfficientNetB7Chia':
+            network: nn.Module = EfficientNetB7Chia(n=num_classes, dropout_prob=dropout_prob,
+                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'DenseNet121Chia':
+            network: nn.Module = DenseNet121Chia(n=num_classes, dropout_prob=dropout_prob,
+                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'MobileNetV2Chia':
+            network: nn.Module = MobileNetV2Chia(n=num_classes, dropout_prob=dropout_prob,
+                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'ResNet34Chia':
+            network: nn.Module = ResNet34Chia(n=num_classes, dropout_prob=dropout_prob,
+                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         # elif net_type == 'CustomDenseNet3D':
         #     network: nn.Module = CustomDenseNet3D(dropout_prob)
         else:
@@ -106,12 +151,19 @@ class Model:
 
         if optimizer_type == 'adam':
             # Define the optimizer. It wants to know which parameters are being optimized.
-            optimizer_fn = torch.optim.Adam(params=network.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+            optimizer_fn = torch.optim.Adam(
+                params=network.parameters(),
+                lr=self.lr,
+                weight_decay=self.weight_decay,
+                # betas=(0.9, 0.99),
+                # eps=1e-5
+            )
         elif optimizer_type == 'adamw':
             # Define the optimizer. It wants to know which parameters are being optimized.
             optimizer_fn = torch.optim.AdamW(params=network.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         elif optimizer_type == 'SGD':
-            optimizer_fn = torch.optim.SGD(params=network.parameters(), lr=self.lr, momentum=0.9, weight_decay=self.weight_decay,
+            optimizer_fn = torch.optim.SGD(params=network.parameters(), lr=self.lr, momentum=0.9,
+                                           weight_decay=self.weight_decay,
                                            nesterov=True)
         else:
             raise ValueError('Bad optimizer type. Please choose adam or ...')
@@ -136,7 +188,8 @@ class Model:
         on_plateau_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', patience=3,
                                                                           factor=0.5)
         # decreasing_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.lr_decay)
-        cyclic_lr_scheduler = torch.optim.lr_scheduler.CyclicLR(self.optimizer, base_lr=self.base_lr, max_lr=self.max_lr,
+        cyclic_lr_scheduler = torch.optim.lr_scheduler.CyclicLR(self.optimizer, base_lr=self.base_lr,
+                                                                max_lr=self.max_lr,
                                                                 step_size_up=len(train_loader), cycle_momentum=False,
                                                                 gamma=self.lr_decay, last_epoch=last_epoch)
         # cyclic_lr_scheduler = None
@@ -163,7 +216,9 @@ class Model:
                     cyclic_lr_scheduler,
                     DEVICE
                 )
+                # time.sleep(10)
                 val_loss, val_metric = self.net.val_batch(val_loader, self.loss, self.metric, DEVICE)
+                # time.sleep(10)
 
                 end_epoch.record()
                 torch.cuda.synchronize(DEVICE)

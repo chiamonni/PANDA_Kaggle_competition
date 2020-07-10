@@ -1,5 +1,6 @@
 import torch
 from torch.nn import functional as F
+import numpy as np
 
 
 def check_tensor(name, t):
@@ -7,12 +8,11 @@ def check_tensor(name, t):
         print(name, t)
 
 
-def _quadratic_kappa_coefficient(output, target, eps=0.):
-    output, target = output.type(torch.float32), target.type(torch.float32)
+def _quadratic_kappa_coefficient(output, target, eps=1e-7):
     # check_tensor('output', output)
     # check_tensor('target', target)
     n_classes = target.shape[-1]
-    weights = torch.arange(0, n_classes, dtype=torch.float32, device=output.device) / (n_classes - 1)
+    weights = torch.arange(0, n_classes, dtype=output.dtype, device=output.device) / (n_classes - 1)
     weights = (weights - torch.unsqueeze(weights, -1)) ** 2
     # check_tensor('weights', weights)
 
@@ -25,15 +25,6 @@ def _quadratic_kappa_coefficient(output, target, eps=0.):
     E = hist_true @ hist_pred.t()  # Outer product of histograms
     E = E / C.sum()  # Normalize to the sum of C.
     # check_tensor("E", E)
-    if torch.isinf(E).any():
-        print("E", E)
-        print("output", output)
-        print("target", target)
-        print("weights", weights)
-        print("C", C)
-        print("hist_true", hist_true)
-        print("hist_pred", hist_pred)
-        raise ValueError("inf found")
 
     num = weights * C
     den = weights * E
@@ -56,34 +47,36 @@ class QWKMetric(torch.nn.Module):
         self.binned = binned
 
     def forward(self, output, target):
-        target = F.one_hot(target.squeeze(), num_classes=6).to(target.device)
+        dtype = output.dtype
+        target = F.one_hot(target.squeeze(), num_classes=6).to(target.device).type(dtype)
         if self.binned:
             output = torch.sigmoid(output).sum(1).round().long()
-            output = F.one_hot(output.squeeze(), num_classes=6).to(output.device)
+            output = F.one_hot(output.squeeze(), num_classes=6).to(output.device).type(dtype)
         else:
             output = torch.softmax(output, dim=1)
         return _quadratic_kappa_coefficient(output, target)
 
 
 class QWKLoss(torch.nn.Module):
-    def __init__(self, scale=2.0, binned=False):
+    def __init__(self, scale=2.0):
         super().__init__()
-        self.binned = binned
         self.scale = scale
 
     def forward(self, output, target):
-        target = F.one_hot(target.squeeze(), num_classes=6).to(target.device)
-        if self.binned:
-            output = torch.sigmoid(output).sum(1).round().long()
-            output = F.one_hot(output.squeeze(), num_classes=6).to(output.device)
-        else:
-            output = torch.softmax(output, dim=1)
+        target = F.one_hot(target.squeeze(), num_classes=6).to(target.device).type(output.dtype)
+        output = torch.softmax(output, dim=1)
         return _quadratic_kappa_loss(output, target, self.scale)
 
-'''
-if __name__ == '__main__':
-    target = torch.rand((64, 6))
-    output = torch.rand((64, 1, 6))
-    print("QWK coefficient: {}".format(_quadratic_kappa_coefficient(output, target)))
-    print("QWK loss: {}".format(_quadratic_kappa_loss(output, target)))
-    '''
+
+class Accuracy:
+    def __init__(self, batch_size):
+        self.score_accumulator = torch.zeros(5)
+        self.batch_size = batch_size
+
+    def __call__(self, output, target, *args, **kwargs):
+        dtype = output.dtype
+        target = F.one_hot(target.squeeze(), num_classes=6).to(target.device).type(dtype)
+        output = torch.sigmoid(output).sum(1).round()
+        output = F.one_hot(output.squeeze(), num_classes=6).to(output.device).type(dtype)
+        self.score_accumulator = output - target
+

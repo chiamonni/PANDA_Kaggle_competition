@@ -23,6 +23,9 @@ from PIL import Image
 from welford import Welford
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+# from manage_dataset import StridedCrop, ZeroThreshold, SaveTensor
+from akensert_transforms import *
 
 os.setgid(1000), os.setuid(1000)
 
@@ -79,11 +82,12 @@ def save_torch(img, filename, dest_path):
 
 
 class ManageDataset(Dataset):
-    def __init__(self, archive_path, paths_list, dest_folder):
+    def __init__(self, archive_path, paths_list, level=1, transforms=None):
         Dataset.__init__(self)
         self.archive_path = archive_path
         self.paths_list = paths_list
-        self.dest_folder = dest_folder
+        self.level = level
+        self.transform = transforms
 
     def __len__(self):
         return len(self.paths_list)
@@ -92,18 +96,92 @@ class ManageDataset(Dataset):
         with ZipFile(self.archive_path, 'r') as zipped_files:
             file = self.paths_list[item]
             # Open tiff image and obtain second layer (in the 'asarray' parameter).
-            img = TiffFile(BytesIO(zipped_files.read(file))).asarray(1)
-        # Convert image to negative - to optain more zeros
-        img = 255 - img
-        # Crop image to nonzero borders
-        img: np.ndarray = crop_image_only_outside(img)
+            scan = TiffFile(BytesIO(zipped_files.read(file))).asarray(self.level)
         # Retrieve filename
         filename = file.filename.split('/')[-1].split('.')[0]
-        # Save sparse version of tensor
-        # save_to_sparse(img, filename, os.path.join(dest_path, 'sparse'))
-        # Save jpeg version of image
-        save_jpeg(img, filename, os.path.join(self.dest_folder, 'type1'))
-        return filename
+        # Create sample
+        sample = {
+            'filename': filename,
+            'scan': scan
+        }
+        return self.transform(sample) if self.transform else sample
+
+
+class InvertColors:
+    def __call__(self, sample, *args, **kwargs):
+        scan = sample['scan']
+        return {**sample, 'scan': 255 - scan}
+
+
+class Akensert:
+    def __init__(self, patch_size=256, min_patch_info = .35, min_axis_info=0.35, min_consec_axis_info=0.35, min_decimal_keep=0.7):
+        self.patch_size = patch_size
+        self.min_patch_info = min_patch_info
+        self.min_axis_info = min_axis_info
+        self.min_consec_axis_info = min_consec_axis_info
+        self.min_decimal_keep = min_decimal_keep
+
+    def __call__(self, sample, *args, **kwargs):
+        image = sample['scan']
+        # assert image.max() == 255, "Keep original images for better thresholds"
+        image, coords = compute_coords(image,
+                       patch_size=self.patch_size,
+                       precompute=False,
+                       min_patch_info=self.min_patch_info,
+                       min_axis_info=self.min_axis_info,
+                       min_consec_axis_info=self.min_consec_axis_info,
+                       min_decimal_keep=self.min_decimal_keep)
+        crops = []
+        h, w, _ = image.shape
+        for i, coord in enumerate(coords):
+            v, y, x = coord
+            if y < 0: y = 0
+            if x < 0: x = 0
+            if y > h-self.patch_size: y = h-self.patch_size
+            if x > w-self.patch_size: x = w-self.patch_size
+            img = image[y:y + self.patch_size, x:x+self.patch_size]
+            # Image.fromarray(img).save('test{}_{}.jpeg'.format(i, v))
+            crops.append(img)
+        scan = np.stack(crops, 0)
+        return {**sample, 'scan': scan}
+
+
+class RemoveBorders:
+    def __call__(self, sample, *args, **kwargs):
+        scan = sample['scan']
+        scan = crop_image_only_outside(scan)
+        return {**sample, 'scan': scan}
+
+
+class SaveToDisk:
+    def __init__(self, dest_folder):
+        self.dest_folder = dest_folder
+
+    def __call__(self, sample, *args, **kwargs):
+        filename = sample['filename']
+        scan = sample['scan']
+        save_jpeg(scan, filename, os.path.join(self.dest_folder))
+        return sample
+
+
+class ToTensor:
+    def __call__(self, sample, *args, **kwargs):
+        filename = sample['filename']
+        scan = sample['scan']
+        return filename, scan
+
+
+class Resize:
+    def __init__(self, resize_dim=(128, 128)):
+        self.resizer = transforms.Resize(resize_dim, Image.BILINEAR)
+
+    def __call__(self, sample, *args, **kwargs):
+        scan = sample['scan']
+        scans = []
+        for s in scan:
+            scans.append(np.asarray(self.resizer(Image.fromarray(s))))
+        scan = np.stack(scans, 0)
+        return {**sample, 'scan': scan}
 
 
 if __name__ == '__main__':
@@ -116,7 +194,20 @@ if __name__ == '__main__':
             if 'train_images' in zip_filepath and zip_filepath.endswith('.tiff'):  # Leave masks
                 paths_list.append(file)
 
-    dataset = ManageDataset(path_to_compressed_archive, paths_list, path_to_dest_dataset)
-    loader = DataLoader(dataset, num_workers=12)
-    for _ in tqdm(loader, desc='Processing images'):
+    trans = transforms.Compose([
+        Akensert(),
+        InvertColors(),
+        ZeroThreshold(20),
+        StridedCrop(1024, 0.50, stride=20),
+        Resize((512, 512)),
+        SaveTensor(os.path.join(path_to_dest_dataset, 'crop1024to512T09'))
+        # ToTensor()
+    ])
+
+    dataset = ManageDataset(path_to_compressed_archive, paths_list, level=0, transforms=trans)
+    loader = DataLoader(dataset, shuffle=True, num_workers=0)
+    for batch in tqdm(loader, desc='Processing images'):
+        # for i, s in enumerate(batch[0][1]):
+        #     Image.fromarray(s.numpy()).save('test{}.jpeg'.format(i))
+        # break
         pass

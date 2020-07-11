@@ -10,8 +10,6 @@ from PIL import Image
 import random
 from typing import Union, Tuple
 
-os.setgid(1000), os.setuid(1000)
-
 
 class PANDA_dataset(Dataset):
     def __init__(self, img_folder, train_info_path=None, dataset_quantity=1.0, transform=None):

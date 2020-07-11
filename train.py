@@ -44,7 +44,7 @@ if __name__ == '__main__':
     # variance_path = os.path.join(base_path, 'dataset', 'variance.pt')
 
     # Define training hyper parameters
-    batch_size = 10
+    batch_size = 4
 
     patience = 15
 
@@ -53,14 +53,14 @@ if __name__ == '__main__':
         'num_crops': 26
     }
     train_params = {
-        'base_lr': 8.3e-6,
-        'max_lr': 5e-5,
+        'base_lr': 5e-6,
+        'max_lr': 8e-5,
         'lr': 1e-6,
         'lr_decay': 1.,
         'use_apex': True,
         'weight_decay': 0.,
         'optimizer_type': 'adam',
-        'network_type': 'ResNet34Chia',
+        'network_type': 'ResNet50Chia',
         'loss_type': 'binnedbce',
         'binned': True,
         'freeze_weights': False
@@ -133,12 +133,12 @@ if __name__ == '__main__':
     val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=val_workers, drop_last=True)
 
     # Use in case of start training from saved checkpoint
+    last_epoch = -1
     # import torch
-    # last_epoch = 5
-    # checkpoint = torch.load('experiments/CustomResNet18Siamese_numInitFeatures.32_lr.0.004_lr_decay.1.0_drop.0.4_batchsize.11_loss.metric_optimizer.adamw_patience.10_other_net.32outputfeatures/ep_5_checkpoint_0.18078171.pt')
+    # checkpoint = torch.load('experiments/ResNet34Chia_optimizer.adam_crops.26_batchsize.10_dataset.akensert_freeze.False_lr.1e-06_drop.0.5_loss.binnedbce_patience.15_apex.True_other_net.maxpool/ep_31_checkpoint_0.82542670.pt')
     # model.net.load_state_dict(checkpoint['state_dict'])
     # model.optimizer.load_state_dict(checkpoint['optim_state'])
-    # if use_apex:
+    # if train_params['use_apex']:
     #     from apex import amp
     #     amp.load_state_dict(checkpoint['apex_state'])
 
@@ -168,7 +168,7 @@ if __name__ == '__main__':
                                 '_loss.' + train_params['loss_type'] +
                                 '_patience.' + str(patience) +
                                 '_apex.' + str(train_params['use_apex']) +
-                                '_other_net.' + 'blacks')
+                                '_other_net.' + 'maxpool')
 
         os.makedirs(run_path, exist_ok=False)
 
@@ -181,7 +181,7 @@ if __name__ == '__main__':
         shutil.copy('PANDA_functions.py', run_path)
 
         # Train model
-        val_metric = model.fit(15000, train_loader, val_loader, patience, run_path, last_epoch=-1)
+        val_metric = model.fit(15000, train_loader, val_loader, patience, run_path, last_epoch=last_epoch)
         # Clean checkpoint folder from all the checkpoints that are useless
         clean_folder(run_path, val_metric, delta=0.002)
 

@@ -280,7 +280,8 @@ class ResNet18Chia(BaseNetwork):
         super().__init__(use_apex)
         m = torch.hub
         m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
-        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch,
+                   dropout_prob=dropout_prob)
         self.enc = nn.Sequential(*list(m.children())[:-2])
         if freeze_weights:
             for param in self.enc.parameters():
@@ -376,13 +377,6 @@ class ResNet50Chia(BaseNetwork):
         )
 
     def forward(self, x):
-        # temp = []
-        # x.shape = bs, N, C, H, W
-        # for scan in x.transpose(0, 1):  # Loop over N features and leave batch size
-        #     temp.append(self.enc(scan))
-        # x = torch.cat(temp, 1)  # x.shape = bs, N*nc, 8, 8
-        # x = self.head(x)  # x.shape = bs, 5
-        # return x
         return self.head(x)
 
 
@@ -390,7 +384,6 @@ class DenseNet121Chia(BaseNetwork):
     """
     Same initialization as before, see "IAFoss" for parameters list
     """
-    os.setgid(1000), os.setuid(1000)
     def __init__(self, n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
         super().__init__(use_apex)
         m = torch.hub
@@ -470,20 +463,19 @@ class ResNet34Chia(BaseNetwork):
     """
     Same initialization as before, see "IAFoss" for parameters list
     """
-    os.setgid(1000), os.setuid(1000)
     def __init__(self, n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
         super().__init__(use_apex)
         m = torch.hub
         m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
         m = m.load('pytorch/vision:v0.6.0', 'resnet34', pretrained=True)
-        m = nn.Sequential(*list(m.children())[:-1])
+        m = nn.Sequential(*list(m.children())[:-2])
         if freeze_weights:
             for param in m.parameters():
                 param.requires_grad_(False)
 
         nc = 512
         self.head = nn.Sequential(
-            ChiaBlock(m),
+            ChiaBlock(nn.Sequential(m, nn.AdaptiveMaxPool2d(1))),
             # AdaptiveConcatPool2d(),
             # nn.AdaptiveMaxPool2d((1, 1)),
             Mish(),

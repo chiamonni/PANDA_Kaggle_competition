@@ -84,6 +84,7 @@ class Model:
         # Mandatory parameters to be used.
         dropout_prob = net_hyperparams['dropout_prob']
         num_crops = net_hyperparams['num_crops']
+        fc_dim = net_hyperparams['fc_dim']
         # Define number of classes in case I use binned labels
         if self.binned:
             num_classes = 5
@@ -91,49 +92,54 @@ class Model:
             num_classes = 6
         # Define custom network. In each one the specific parameters must be added from self.net_params
         if net_type == 'IAFoss':
-            network: nn.Module = IAFoss(n=num_classes, fc_dim=512, freeze_weights=self.freeze_weights,
+            network: nn.Module = IAFoss(n=num_classes, fc_dim=fc_dim, freeze_weights=self.freeze_weights,
                                         dropout_prob=dropout_prob, use_apex=self.use_apex)
         elif net_type == 'IAFoss_SiameseIdea':
             network: nn.Module = IAFoss_SiameseIdea(n=num_classes, num_crops=num_crops,
                                                     freeze_weights=self.freeze_weights, dropout_prob=dropout_prob,
                                                     use_apex=self.use_apex)
         elif net_type == 'Chia':
-            network: nn.Module = Chia(n=num_classes, fc_dim=512, freeze_weights=self.freeze_weights,
+            network: nn.Module = Chia(n=num_classes, fc_dim=fc_dim, freeze_weights=self.freeze_weights,
                                       dropout_prob=dropout_prob, use_apex=self.use_apex)
-        elif net_type == 'EfficientNetB0':
-            network: nn.Module = EfficientNetB0(num_classes=num_classes, dropout_prob=dropout_prob,
-                                                freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'EfficientNetB0Chia':
+            network: nn.Module = EfficientNetB0Chia(num_classes=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'EfficientNetB0Siamese':
             network: nn.Module = EfficientNetB0Siamese(num_classes=num_classes, dropout_prob=dropout_prob,
                                                        num_crops=num_crops, freeze_weights=self.freeze_weights,
                                                        use_apex=self.use_apex)
         elif net_type == 'BigSiamese':
-            network: nn.Module = BigSiamese(n=num_classes, dropout_prob=dropout_prob, num_crops=num_crops,
+            network: nn.Module = BigSiamese(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                            num_crops=num_crops,
                                             freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'ResNet50Siamese':
-            network: nn.Module = ResNet50Siamese(n=num_classes, dropout_prob=dropout_prob, num_crops=num_crops,
+            network: nn.Module = ResNet50Siamese(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                                 num_crops=num_crops,
                                                  freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'ResNet18Chia':
-            network: nn.Module = ResNet18Chia(n=num_classes, dropout_prob=dropout_prob,
+            network: nn.Module = ResNet18Chia(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
                                               freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'ResNet18ChiaSSL':
-            network: nn.Module = ResNet18ChiaSSL(n=num_classes, dropout_prob=dropout_prob,
-                                              freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+            network: nn.Module = ResNet18ChiaSSL(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                                 freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'ResNet50Chia':
-            network: nn.Module = ResNet50Chia(n=num_classes, dropout_prob=dropout_prob,
+            network: nn.Module = ResNet50Chia(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
                                               freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'EfficientNetB7Chia':
-            network: nn.Module = EfficientNetB7Chia(n=num_classes, dropout_prob=dropout_prob,
+            network: nn.Module = EfficientNetB7Chia(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
                                                     freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'DenseNet121Chia':
-            network: nn.Module = DenseNet121Chia(n=num_classes, dropout_prob=dropout_prob,
-                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+            network: nn.Module = DenseNet121Chia(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                                 freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'MobileNetV2Chia':
-            network: nn.Module = MobileNetV2Chia(n=num_classes, dropout_prob=dropout_prob,
-                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+            network: nn.Module = MobileNetV2Chia(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                                 freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         elif net_type == 'ResNet34Chia':
-            network: nn.Module = ResNet34Chia(n=num_classes, dropout_prob=dropout_prob,
-                                                    freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+            network: nn.Module = ResNet34Chia(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                              freeze_weights=self.freeze_weights, use_apex=self.use_apex)
+        elif net_type == 'ResNet18ChiaVariant':
+            network: nn.Module = ResNet18ChiaVariant(n=num_classes, dropout_prob=dropout_prob, fc_dim=fc_dim,
+                                              freeze_weights=self.freeze_weights, use_apex=self.use_apex)
         # elif net_type == 'CustomDenseNet3D':
         #     network: nn.Module = CustomDenseNet3D(dropout_prob)
         else:
@@ -180,6 +186,8 @@ class Model:
         filename = 'ep_{}_checkpoint_{:.8f}.pt'.format(epoch, metric)
         filepath = os.path.join(run_path, filename)
         torch.save(state, filepath)
+        # Save lighter checkpoint to upload to competition
+        torch.save(self.net.state_dict(), os.path.join(run_path, 'competition_ckpt.pt'))
 
     def fit(self, epochs, train_loader, val_loader, patience, run_path=None, last_epoch=-1):
         early_stopping = EarlyStopping(patience=patience, verbose=False, mode='higher')
@@ -190,7 +198,8 @@ class Model:
         # decreasing_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, self.lr_decay)
         cyclic_lr_scheduler = torch.optim.lr_scheduler.CyclicLR(self.optimizer, base_lr=self.base_lr,
                                                                 max_lr=self.max_lr,
-                                                                step_size_up=len(train_loader), cycle_momentum=False,
+                                                                step_size_up=len(train_loader),
+                                                                cycle_momentum=False,
                                                                 gamma=self.lr_decay, last_epoch=last_epoch)
         # cyclic_lr_scheduler = None
 

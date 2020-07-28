@@ -24,7 +24,7 @@ from welford import Welford
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-# from manage_dataset import StridedCrop, ZeroThreshold, SaveTensor
+from manage_dataset import ZeroThreshold
 from akensert_transforms import *
 
 os.setgid(1000), os.setuid(1000)
@@ -69,11 +69,6 @@ def save_to_sparse(img, filename, dest_path):
     with gzip.GzipFile(values_path, 'w', compresslevel=1) as f:
         torch.save(values, f)
     torch.save(size, size_path)
-
-
-def save_jpeg(img, filename, dest_path):
-    os.makedirs(dest_path, exist_ok=True)
-    Image.fromarray(img).save(os.path.join(dest_path, filename + '.jpeg'))
 
 
 def save_torch(img, filename, dest_path):
@@ -154,13 +149,16 @@ class RemoveBorders:
 
 
 class SaveToDisk:
-    def __init__(self, dest_folder):
+    def __init__(self, dest_folder, patch_size=128):
         self.dest_folder = dest_folder
+        self.patch_size = patch_size
 
     def __call__(self, sample, *args, **kwargs):
         filename = sample['filename']
         scan = sample['scan']
-        save_jpeg(scan, filename, os.path.join(self.dest_folder))
+        # scan = sample['scan'].reshape(-1, self.patch_size, 3)
+        os.makedirs(self.dest_folder, exist_ok=True)
+        Image.fromarray(scan).save(os.path.join(self.dest_folder, filename + '.jpeg'))
         return sample
 
 
@@ -173,7 +171,7 @@ class ToTensor:
 
 class Resize:
     def __init__(self, resize_dim=(128, 128)):
-        self.resizer = transforms.Resize(resize_dim, Image.BILINEAR)
+        self.resizer = transforms.Resize(resize_dim, Image.BICUBIC)
 
     def __call__(self, sample, *args, **kwargs):
         scan = sample['scan']
@@ -186,7 +184,7 @@ class Resize:
 
 if __name__ == '__main__':
     path_to_compressed_archive = '/opt/whole_dataset/prostate-cancer-grade-assessment.zip'
-    path_to_dest_dataset = '/opt/local_dataset/images'
+    path_to_dest_dataset = '/opt/local_dataset/images/type2'
     paths_list = []
     with ZipFile(path_to_compressed_archive, 'r') as zipped_files:  # Open zipped file
         for file in tqdm(zipped_files.infolist()):  # Obtain file list
@@ -195,17 +193,19 @@ if __name__ == '__main__':
                 paths_list.append(file)
 
     trans = transforms.Compose([
-        Akensert(),
         InvertColors(),
-        ZeroThreshold(20),
-        StridedCrop(1024, 0.50, stride=20),
-        Resize((512, 512)),
-        SaveTensor(os.path.join(path_to_dest_dataset, 'crop1024to512T09'))
+        ZeroThreshold(),
+        RemoveBorders(),
+        SaveToDisk(path_to_dest_dataset)
+        # ZeroThreshold(20),
+        # StridedCrop(1024, 0.50, stride=20),
+        # Resize((512, 512)),
+        # SaveTensor(os.path.join(path_to_dest_dataset, 'crop1024to512T09'))
         # ToTensor()
     ])
 
-    dataset = ManageDataset(path_to_compressed_archive, paths_list, level=0, transforms=trans)
-    loader = DataLoader(dataset, shuffle=True, num_workers=0)
+    dataset = ManageDataset(path_to_compressed_archive, paths_list, level=2, transforms=trans)
+    loader = DataLoader(dataset, shuffle=False, num_workers=2)
     for batch in tqdm(loader, desc='Processing images'):
         # for i, s in enumerate(batch[0][1]):
         #     Image.fromarray(s.numpy()).save('test{}.jpeg'.format(i))

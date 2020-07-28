@@ -2,7 +2,7 @@ from dataset import \
     PANDA_dataset, \
     NormScale,\
     DataAugmentation,\
-    NormCropsNumber,\
+    RandomOcclusion, \
     AugmentDataset,\
     ToTensor, \
     Compose, \
@@ -35,7 +35,8 @@ def clean_folder(folder, metric, delta=0.02):
 if __name__ == '__main__':
     # import time
     # time.sleep(36000)
-    mode = 'akensert'
+    crop_size = 256
+    mode = 'akensert_4x'
     base_path = os.path.join('/opt/local_dataset')
     train_pt_folder = os.path.join(base_path, 'images', mode)
     train_info_path = os.path.join(base_path, 'train.csv')
@@ -44,30 +45,31 @@ if __name__ == '__main__':
     # variance_path = os.path.join(base_path, 'dataset', 'variance.pt')
 
     # Define training hyper parameters
-    batch_size = 4
+    batch_size = 15
 
     patience = 15
 
     net_hyperparams = {
-        'dropout_prob': 0.5,
-        'num_crops': 26
+        'dropout_prob': 0.4,
+        'num_crops': 26,
+        'fc_dim': 512
     }
     train_params = {
-        'base_lr': 5e-6,
-        'max_lr': 8e-5,
-        'lr': 1e-6,
+        'base_lr': 1e-5,
+        'max_lr': 6e-5,
+        'lr': 3e-5,
         'lr_decay': 1.,
         'use_apex': True,
-        'weight_decay': 0.,
-        'optimizer_type': 'adam',
-        'network_type': 'ResNet50Chia',
+        'weight_decay': 0.05,
+        'optimizer_type': 'adamw',
+        'network_type': 'ResNet18Chia',
         'loss_type': 'binnedbce',
         'binned': True,
         'freeze_weights': False
     }
 
     # Define training settings
-    train_workers = 10
+    train_workers = 8
     val_workers = 8
     val_dim = 0.3
     dataset_quantity = 1.
@@ -76,7 +78,7 @@ if __name__ == '__main__':
     if lr_range_test:
         train_workers = 0
 
-    dataset = PANDA_dataset(train_pt_folder, train_info_path)
+    dataset = PANDA_dataset(train_pt_folder, train_info_path, crop_size)
 
     # Split dataset in train/val
     dataset_len = len(dataset)
@@ -116,8 +118,10 @@ if __name__ == '__main__':
             # contrast=(.5, 1.5),
             # saturation=(0.7, 1.5),
             # hue=(-.3, .1),
-            no_color=True
+            no_color=True,
+            affine=True
         ),
+        RandomOcclusion(160),
         last_trans
     ])
 
@@ -149,7 +153,7 @@ if __name__ == '__main__':
         criterion = model.loss
         optimizer = model.optimizer
         lr_finder = LRFinder(network, optimizer, criterion, device='cuda:0')
-        lr_finder.range_test(train_loader, val_loader, end_lr=1e-2, num_iter=50, accumulation_steps=1)
+        lr_finder.range_test(train_loader, val_loader, end_lr=1e-2, num_iter=100, accumulation_steps=1)
         json.dump(lr_finder.history, open('lr_finder.json', 'w'))
         lr_finder.plot()
         lr_finder.reset()
@@ -168,7 +172,7 @@ if __name__ == '__main__':
                                 '_loss.' + train_params['loss_type'] +
                                 '_patience.' + str(patience) +
                                 '_apex.' + str(train_params['use_apex']) +
-                                '_other_net.' + 'maxpool')
+                                '_other_net.' + 'occlusion+affine')
 
         os.makedirs(run_path, exist_ok=False)
 
@@ -183,7 +187,7 @@ if __name__ == '__main__':
         # Train model
         val_metric = model.fit(15000, train_loader, val_loader, patience, run_path, last_epoch=last_epoch)
         # Clean checkpoint folder from all the checkpoints that are useless
-        clean_folder(run_path, val_metric, delta=0.002)
+        # clean_folder(run_path, val_metric, delta=0.002)
 
 
 

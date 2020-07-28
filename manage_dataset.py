@@ -1,13 +1,10 @@
-from decompress_and_convert import Akensert, InvertColors
+# from decompress_and_convert import SaveToDisk, Resize
 import os
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 import torch
-from torchvision.transforms import \
-    Resize, \
-    RandomRotation
 import torchvision.transforms
 from PIL import Image
 import random
@@ -43,7 +40,7 @@ class PANDA_dataset(Dataset):
     def __getitem__(self, item):
         # Get the ID corresponding to the item (an index) that torch is looking for.
         filename = self.__num_to_id[item]
-        scan = np.array(Image.open(self.img_paths[filename]))
+        scan = np.array(Image.open(self.img_paths[filename])).reshape((-1, 256, 256, 3))
 
         # Create sample
         sample = {
@@ -219,7 +216,7 @@ if __name__ == '__main__':
     from torchvision import transforms
 
     base_path = os.path.join('/opt/local_dataset')
-    train_pt_folder = os.path.join(base_path, 'images/type1')
+    train_pt_folder = os.path.join(base_path, 'images/akensert_4x')
     train_info_path = os.path.join(base_path, 'train.csv')
     mask_path = os.path.join(base_path, 'train_label_masks')
     # mean_path = os.path.join(base_path, 'dataset', 'mean.pt')
@@ -227,13 +224,16 @@ if __name__ == '__main__':
 
     # Define transformations
     # trans = transforms.Compose([Resize((1840, 1728))])
+    crop_size = 224
     trans = transforms.Compose([
-        InvertColors(),
-        Akensert(),
-        InvertColors(),
+        Resize(crop_size),
+        SaveToDisk(os.path.join(base_path, 'images', 'akensert_' + str(crop_size)), crop_size)
+        # InvertColors(),
+        # Akensert(),
+        # InvertColors(),
         # ZeroThreshold(20),
         # StridedCrop(256, .50, stride=5),
-        SaveTensor(os.path.join(base_path, 'images', 'akensert'))
+        # SaveTensor(os.path.join(base_path, 'images', 'akensert'))
     ])
     dataset = PANDA_dataset(train_pt_folder, transform=trans)
     dataloader = DataLoader(dataset, batch_size=1, num_workers=12)

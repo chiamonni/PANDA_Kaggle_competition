@@ -12,9 +12,10 @@ from typing import Union, Tuple
 
 
 class PANDA_dataset(Dataset):
-    def __init__(self, img_folder, train_info_path=None, dataset_quantity=1.0, transform=None):
+    def __init__(self, img_folder, train_info_path=None, crop_size=128, dataset_quantity=1.0, transform=None):
         super(Dataset, self).__init__()
         print('Loading dataset...')
+        self.crop_size = crop_size
         # Load data
         # Store the paths to the .gz file as a dictionary {patientID: complete_path_to_file}
         self.img_paths = {filename.split('.')[0]: os.path.join(img_folder, filename) for filename in
@@ -51,7 +52,7 @@ class PANDA_dataset(Dataset):
         # Get the ID corresponding to the item (an index) that torch is looking for.
         id = self.__num_to_id[item]
 
-        scan = torch.load(self.img_paths[id]).numpy()
+        scan = np.array(Image.open(self.img_paths[id])).reshape((-1, self.crop_size, self.crop_size, 3))
         # Create sample
         sample = {
             'ID': id,
@@ -108,7 +109,8 @@ class DataAugmentation:
                  # hue=0.,
                  rotation=180,
                  only_color=False,
-                 no_color=False
+                 no_color=False,
+                 affine=False
                  ):
         self.color = torchvision.transforms.ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
         self.hf = RandomHorizontalFlip(p=0.5)
@@ -116,8 +118,9 @@ class DataAugmentation:
         self.rotate = RandomRotation(rotation, expand=False)
         self.only_color = only_color
         self.no_color = no_color
-        # self.rotate = RandomAffine(rotation, translate=None, scale=None, shear=None, resample=False,
-        #                                                   fillcolor=(0, 0, 0))
+        self.affine_trans = RandomAffine(0, translate=None, scale=None, shear=25, resample=False,
+                                                          fillcolor=(0, 0, 0))
+        self.affine = affine
 
     def __call__(self, sample, *args, **kwargs):
         scan = sample['scan']
@@ -128,6 +131,9 @@ class DataAugmentation:
             transform = lambda x: self.rotate(self.hf(self.vf(x)))
         else:
             transform = lambda x: self.rotate(self.hf(self.vf(self.color(x))))
+        if self.affine:
+            fun = transform
+            transform = lambda x: fun(self.affine_trans(x))
         scan = np.stack([transform(s) for s in scan], 0)
         # for s in scan:
             # s = self.color(s)
@@ -186,6 +192,26 @@ class ZeroNormCropsNumber:
             scan = scan[indices]
 
         return {**sample, 'scan': scan}
+
+
+class RandomOcclusion:
+    def __init__(self, max_side_len=128):
+        self.max_side_len = max_side_len
+
+    def __call__(self, sample, *args, **kwargs):
+        scans = sample['scan']
+        scans_list = []
+        s_w, s_h, _ = scans[0].shape
+        for scan in scans:
+            if random.random() > 0.5:
+                w = int(random.random()*self.max_side_len)
+                h = int(random.random()*self.max_side_len)
+                patch = np.zeros((w, h, 3))
+                pos_w = int(random.random()*(s_w - w))
+                pos_h = int(random.random()*(s_h - h))
+                scan[pos_w:pos_w + w, pos_h:pos_h + h, ...] = patch
+            scans_list.append(scan)
+        return {**sample, 'scan': np.stack(scans_list, 0)}
 
 
 class Compose:
@@ -253,7 +279,7 @@ if __name__ == '__main__':
     from torchvision import transforms
 
     base_path = os.path.join('/opt/local_dataset')
-    train_pt_folder = os.path.join(base_path, 'images/cropped')
+    train_pt_folder = os.path.join(base_path, 'images/akensert_4x')
     train_info_path = os.path.join(base_path, 'train.csv')
     mask_path = os.path.join(base_path, 'train_label_masks')
     # mean_path = os.path.join(base_path, 'dataset', 'mean.pt')
@@ -267,13 +293,15 @@ if __name__ == '__main__':
             # contrast=(1.5, 1.5),
             # saturation=(0.7, 0.7),
             # only_color=True
-            no_color=True
+            no_color=True,
+            affine=True
         ),
+        RandomOcclusion(),
         Compose((8, 8)),
         # NormScale(standardize=True),
         # ToTensor(training=False)
     ])
-    dataset = PANDA_dataset(train_pt_folder, transform=trans)
+    dataset = PANDA_dataset(train_pt_folder, crop_size=256, transform=trans)
     dataloader = DataLoader(dataset, shuffle=False, num_workers=0)
 
     crops = []

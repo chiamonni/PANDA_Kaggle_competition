@@ -150,13 +150,3 @@ class BinnedBCE(nn.Module):
     def forward(self, output, target: torch.Tensor):
         bin_target = torch.stack([self.binning(t) for t in target.tolist()], dim=0).to(target.device)
         return self.loss(output, bin_target)
-
-
-if __name__ == '__main__':
-    p = Plotter()
-    a = (0, 0.123, 0.431, 0.23542, 0.1231)
-    b = (1, 1.123, 1.431, 1.23542, 1.1231)
-    c = (2, 2.123, 1.431, 3.23542, 4.1231)
-    p(*a)
-    p(*b)
-    p(*c)

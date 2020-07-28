@@ -280,20 +280,51 @@ class ResNet18Chia(BaseNetwork):
         super().__init__(use_apex)
         m = torch.hub
         m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
-        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch,
-                   dropout_prob=dropout_prob)
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
         self.enc = nn.Sequential(*list(m.children())[:-2])
         if freeze_weights:
             for param in self.enc.parameters():
                 param.requires_grad_(False)
         nc = list(m.children())[-1].in_features
         self.head = nn.Sequential(
-            ChiaBlock(nn.Sequential(self.enc, nn.AdaptiveMaxPool2d(1))),
+            ChiaBlock(nn.Sequential(self.enc, nn.AdaptiveMaxPool2d(1), Mish())),
             # AdaptiveConcatPool2d(),
             # nn.AdaptiveMaxPool2d((1, 1)),
-            Mish(),
+            # Mish(),
             Flatten(),
+            # nn.BatchNorm1d(nc),
             nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, n)
+        )
+
+    def forward(self, x):
+        return self.head(x)
+
+
+class ResNet18ChiaVariant(BaseNetwork):
+    """
+    Same initialization as before, see "IAFoss" for parameters list
+    """
+    def __init__(self, arch='resnet18_swsl', n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
+        super().__init__(use_apex)
+        m = torch.hub
+        m.hub_dir = 'cache'  # Define custom hub dir to avoid writing inside the container
+        m = m.load('facebookresearch/semi-supervised-ImageNet1K-models', arch)
+        self.enc = nn.Sequential(*list(m.children())[:-2])
+        if freeze_weights:
+            for param in self.enc.parameters():
+                param.requires_grad_(False)
+        nc = list(m.children())[-1].in_features
+        self.head = nn.Sequential(
+            ChiaBlock(nn.Sequential(self.enc, nn.AdaptiveMaxPool2d(4), Mish())),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            # Mish(),
+            Flatten(),
+            # nn.BatchNorm1d(nc),
+            nn.Linear(nc*16, fc_dim),
             nn.Dropout(dropout_prob),
             Mish(),
             nn.Linear(fc_dim, n)
@@ -423,7 +454,6 @@ class MobileNetV2Chia(BaseNetwork):
     """
     Same initialization as before, see "IAFoss" for parameters list
     """
-    os.setgid(1000), os.setuid(1000)
     def __init__(self, n=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
         super().__init__(use_apex)
         m = torch.hub
@@ -536,11 +566,11 @@ class EfficientNetB7Chia(BaseNetwork):
         return self.head(x)
 
 
-class EfficientNetB0(BaseNetwork):
+class EfficientNetB0Chia(BaseNetwork):
     """
     Same initialization as before, see "IAFoss" for parameters list
     """
-    def __init__(self, num_classes=6, freeze_weights=False, dropout_prob=0., use_apex=False):
+    def __init__(self, num_classes=6, fc_dim=512, freeze_weights=False, dropout_prob=0., use_apex=False):
         super().__init__(use_apex)
         pretrained_model = ('efficientnet-b0', 'efficientnet-b0-355c32eb.pth')
         self.enc = EfficientNet.from_name(pretrained_model[0])
@@ -550,14 +580,22 @@ class EfficientNetB0(BaseNetwork):
             for param in self.enc.parameters():
                 param.requires_grad_(False)
 
-        self.classify = nn.Sequential(
-            self.enc,
-            nn.Linear(self.enc._fc.in_features, num_classes)
+        nc = self.enc._fc.in_features
+        self.head = nn.Sequential(
+            ChiaBlock(self.enc),
+            # AdaptiveConcatPool2d(),
+            # nn.AdaptiveMaxPool2d((1, 1)),
+            Mish(),
+            Flatten(),
+            nn.Linear(nc, fc_dim),
+            nn.Dropout(dropout_prob),
+            Mish(),
+            nn.Linear(fc_dim, num_classes)
         )
         self.enc._fc = nn.Identity()
 
     def forward(self, x):
-        return self.classify(x)
+        return self.head(x)
 
 
 class EfficientNetB0Siamese(BaseNetwork):

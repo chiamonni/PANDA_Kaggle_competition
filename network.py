@@ -1,4 +1,3 @@
-import torchvision.models as models
 import torch
 from torch import nn
 from tqdm import tqdm

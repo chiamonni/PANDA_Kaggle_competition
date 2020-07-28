@@ -20,8 +20,6 @@ import torch
 from tqdm import tqdm
 import gzip
 from PIL import Image
-from welford import Welford
-import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from manage_dataset import ZeroThreshold

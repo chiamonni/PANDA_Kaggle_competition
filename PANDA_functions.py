@@ -1,6 +1,5 @@
 import torch
 from torch.nn import functional as F
-import numpy as np
 
 
 def check_tensor(name, t):

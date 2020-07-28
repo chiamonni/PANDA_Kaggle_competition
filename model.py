@@ -3,7 +3,7 @@ from PANDA_functions import QWKMetric, QWKLoss
 from network import *
 from pytorchtools import EarlyStopping, BinnedBCE
 
-from apex import amp, optimizers
+from apex import amp
 
 import os
 import torch
@@ -13,7 +13,6 @@ from tqdm import tqdm
 from typing import Dict, Union
 
 os.setgid(1000), os.setuid(1000)
-import time
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 

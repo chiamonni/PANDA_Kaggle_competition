@@ -40,6 +40,9 @@ In addition, I found out that simple flipping/rotation really helped me out in l
 I also added a random occlusion augmentation, which covered each crop with a rectangle of ranging size of [0, 224) and really helped me in generalize the model performance w.r.t. the LB.
 As a side note, I think that those augmentations really helped my model perform so well in the private leader board (I gained +3% accuracy).
 
+![resulting crops](https://github.com/chiamonni/PANDA_Kaggle_competition/images/test.jpeg)
+An example of the resulting augmentations, with 8x8 crops.
+
 # Network architecture
 For the network architecture I took inspiration from the method used from experts, that is:
 1. look closely to the tissue;

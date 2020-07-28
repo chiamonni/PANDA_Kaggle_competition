@@ -53,7 +53,7 @@ Therefore, I created a siamese network which received each crops at a time with 
 The output of each siamese branch was then **averaged** with the others as a sort of polling, and then brought to the [binned](https://www.kaggle.com/haqishen/train-efficientnet-b0-w-36-tiles-256-lb0-87) output.
 See the image below for further insight.
 
-![network](https://github.com/chiamonni/PANDA_Kaggle_competition/blob/master/images/number_crops_personal_akensert.png)
+![network](https://github.com/chiamonni/PANDA_Kaggle_competition/blob/master/images/network_architecture.png)
 
 Since my computing resources were limited in memory (8GB VRAM, Nvidia 2070s) I was able to train this network with a [ResNet18 semi-weakly pretrained](https://github.com/facebookresearch/semi-supervised-ImageNet1K-models) model.
 
